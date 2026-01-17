@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Tetris</title>
+<style>
+  body {
+    background:#111;
+    color:#fff;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    height:100vh;
+    font-family:Arial;
+  }
+  #container {
+    display:flex;
+    gap:20px;
+  }
+  canvas {
+    background:#000;
+    border:2px solid #fff;
+  }
+  button {
+    padding:10px;
+    font-size:16px;
+    cursor:pointer;
+  }
+</style>
+</head>
+<body>
+
+<div id="container">
+  <canvas id="tetris" width="240" height="400"></canvas>
+  <div>
+    <h3>점수: <span id="score">0</span></h3>
+    <h3>최고 기록: <span id="best">0</span></h3>
+    <button id="pauseBtn">⏸️ 일시정지</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById("tetris");
+const ctx = canvas.getContext("2d");
+ctx.scale(20,20);
+
+const scoreEl = document.getElementById("score");
+const bestEl = document.getElementById("best");
+const pauseBtn = document.getElementById("pauseBtn");
+
+let score = 0;
+let bestScore = localStorage.getItem("tetrisBest") || 0;
+bestEl.textContent = bestScore;
+
+let paused = false;
+
+/* 🔊 효과음 */
+const sounds = {
+  move: new Audio("https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg"),
+  rotate: new Audio("https://actions.google.com/sounds/v1/cartoon/pop.ogg"),
+  line: new Audio("https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"),
+  gameover: new Audio("https://actions.google.com/sounds/v1/cartoon/descending_whistle_3.ogg")
+};
+
+const matrix = (w,h) => Array.from({length:h},()=>Array(w).fill(0));
+const arena = matrix(12,20);
+
+const colors = [
+  null,"#00f0f0","#0000f0","#f0a000",
+  "#f0f000","#00f000","#a000f0","#f00000"
+];
+
+const pieces = "ILJOTSZ";
+
+function createPiece(type){
+  if(type==="T") return [[0,0,0],[1,1,1],[0,1,0]];
+  if(type==="O") return [[2,2],[2,2]];
+  if(type==="L") return [[0,3,0],[0,3,0],[0,3,3]];
+  if(type==="J") return [[0,4,0],[0,4,0],[4,4,0]];
+  if(type==="I") return [[0,5,0,0],[0,5,0,0],[0,5,0,0],[0,5,0,0]];
+  if(type==="S") return [[0,6,6],[6,6,0],[0,0,0]];
+  if(type==="Z") return [[7,7,0],[0,7,7],[0,0,0]];
+}
+
+const player = {
+  pos:{x:0,y:0},
+  matrix:null
+};
+
+function collide(arena,player){
+  for(let y=0;y<player.matrix.length;y++){
+    for(let x=0;x<player.matrix[y].length;x++){
+      if(player.matrix[y][x]!==0 &&
+        (arena[y+player.pos.y] &&
+         arena[y+player.pos.y][x+player.pos.x])!==0){
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function merge(arena,player){
+  player.matrix.forEach((row,y)=>{
+    row.forEach((v,x)=>{
+      if(v!==0) arena[y+player.pos.y][x+player.pos.x]=v;
+    });
+  });
+}
+
+function rotate(matrix){
+  for(let y=0;y<matrix.length;y++){
+    for(let x=0;x<y;x++){
+      [matrix[x][y],matrix[y][x]]=[matrix[y][x],matrix[x][y]];
+    }
+  }
+  matrix.forEach(r=>r.reverse());
+  sounds.rotate.play();
+}
+
+function arenaSweep(){
+  let rowCount = 0;
+  outer: for(let y=arena.length-1;y>0;y--){
+    for(let x=0;x<arena[y].length;x++){
+      if(arena[y][x]===0) continue outer;
+    }
+    arena.splice(y,1);
+    arena.unshift(Array(12).fill(0));
+    rowCount++;
+    y++;
+  }
+  if(rowCount>0){
+    score += rowCount * 100;
+    sounds.line.play();
+    updateScore();
+  }
+}
+
+function updateScore(){
+  scoreEl.textContent = score;
+  if(score > bestScore){
+    bestScore = score;
+    localStorage.setItem("tetrisBest", bestScore);
+    bestEl.textContent = bestScore;
+  }
+}
+
+function playerDrop(){
+  player.pos.y++;
+  if(collide(arena,player)){
+    player.pos.y--;
+    merge(arena,player);
+    playerReset();
+    arenaSweep();
+  }
+}
+
+function playerReset(){
+  player.matrix = createPiece(pieces[Math.random()*pieces.length|0]);
+  player.pos.y = 0;
+  player.pos.x = (arena[0].length/2|0) - (player.matrix[0].length/2|0);
+  if(collide(arena,player)){
+    sounds.gameover.play();
+    arena.forEach(r=>r.fill(0));
+    score = 0;
+    updateScore();
+  }
+}
+
+function drawMatrix(matrix,offset){
+  matrix.forEach((row,y)=>{
+    row.forEach((v,x)=>{
+      if(v!==0){
+        ctx.fillStyle = colors[v];
+        ctx.fillRect(x+offset.x,y+offset.y,1,1);
+      }
+    });
+  });
+}
+
+function draw(){
+  ctx.fillStyle="#000";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  drawMatrix(arena,{x:0,y:0});
+  drawMatrix(player.matrix,player.pos);
+}
+
+let dropCounter=0;
+let dropInterval=500;
+let lastTime=0;
+
+function update(time=0){
+  if(paused) return;
+  const delta = time-lastTime;
+  lastTime=time;
+  dropCounter+=delta;
+  if(dropCounter>dropInterval){
+    playerDrop();
+    dropCounter=0;
+  }
+  draw();
+  requestAnimationFrame(update);
+}
+
+document.addEventListener("keydown",e=>{
+  if(e.key==="p"){togglePause();return;}
+  if(paused) return;
+  if(e.key==="ArrowLeft"){player.pos.x--;sounds.move.play();}
+  if(e.key==="ArrowRight"){player.pos.x++;sounds.move.play();}
+  if(e.key==="ArrowDown") playerDrop();
+  if(e.key==="ArrowUp") rotate(player.matrix);
+  if(e.key===" "){
+    while(!collide(arena,player)) player.pos.y++;
+    player.pos.y--;
+    merge(arena,player);
+    playerReset();
+  }
+});
+
+function togglePause(){
+  paused=!paused;
+  pauseBtn.textContent = paused ? "▶️ 재개" : "⏸️ 일시정지";
+  if(!paused){
+    lastTime=performance.now();
+    update();
+  }
+}
+
+pauseBtn.onclick = togglePause;
+
+playerReset();
+update();
+</script>
+
+</body>
+</html>
